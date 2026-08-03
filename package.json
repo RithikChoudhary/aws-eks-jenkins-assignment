@@ -1,0 +1,24 @@
+{
+  "name": "aws-eks-jenkins-assignment",
+  "version": "1.0.0",
+  "description": "Production-style Jenkins CI/CD pipeline deploying a Node.js API to Amazon EKS",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "build": "node --check src/app.js && node --check src/server.js",
+    "test": "jest --runInBand"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "supertest": "^7.1.1"
+  },
+  "jest": {
+    "testEnvironment": "node"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
