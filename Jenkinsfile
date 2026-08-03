@@ -4,6 +4,7 @@ pipeline {
     options {
         timestamps()
         disableConcurrentBuilds()
+        skipDefaultCheckout(true)
         timeout(time: 30, unit: 'MINUTES')
         buildDiscarder(logRotator(numToKeepStr: '10'))
     }
@@ -104,45 +105,37 @@ pipeline {
                           --region "$AWS_REGION" \
                           --kubeconfig "$KUBECONFIG"
 
-                        kubectl apply \
-                          --kubeconfig "$KUBECONFIG" \
-                          -f k8s/namespace.yaml
+                        kubectl --kubeconfig "$KUBECONFIG" \
+                          apply -f k8s/namespace.yaml
 
-                        kubectl apply \
-                          --kubeconfig "$KUBECONFIG" \
-                          -f k8s/configmap.yaml
+                        kubectl --kubeconfig "$KUBECONFIG" \
+                          apply -f k8s/configmap.yaml
 
                         kubectl create secret generic sample-api-secret \
                           --namespace "$K8S_NAMESPACE" \
                           --from-literal=DEMO_SECRET="$DEMO_SECRET" \
                           --dry-run=client \
                           -o yaml |
-                        kubectl apply \
-                          --kubeconfig "$KUBECONFIG" \
-                          -f -
+                        kubectl --kubeconfig "$KUBECONFIG" \
+                          apply -f -
 
                         sed "s|IMAGE_URI_PLACEHOLDER|${IMAGE_URI}:${BUILD_NUMBER}|g" \
                           k8s/deployment.yaml |
-                        kubectl apply \
-                          --kubeconfig "$KUBECONFIG" \
-                          -f -
+                        kubectl --kubeconfig "$KUBECONFIG" \
+                          apply -f -
 
-                        kubectl apply \
-                          --kubeconfig "$KUBECONFIG" \
-                          -f k8s/service.yaml
+                        kubectl --kubeconfig "$KUBECONFIG" \
+                          apply -f k8s/service.yaml
 
-                        kubectl apply \
-                          --kubeconfig "$KUBECONFIG" \
-                          -f k8s/hpa.yaml
+                        kubectl --kubeconfig "$KUBECONFIG" \
+                          apply -f k8s/hpa.yaml
 
-                        kubectl apply \
-                          --kubeconfig "$KUBECONFIG" \
-                          -f k8s/ingress.yaml
+                        kubectl --kubeconfig "$KUBECONFIG" \
+                          apply -f k8s/ingress.yaml
 
-                        kubectl rollout status \
-                          deployment/sample-api \
+                        kubectl --kubeconfig "$KUBECONFIG" \
+                          rollout status deployment/sample-api \
                           --namespace "$K8S_NAMESPACE" \
-                          --kubeconfig "$KUBECONFIG" \
                           --timeout=300s
                     '''
                 }
@@ -155,16 +148,21 @@ pipeline {
                     set -eu
 
                     for attempt in $(seq 1 20); do
-                        ALB_DNS="$(kubectl get ingress sample-api \
-                          --namespace "$K8S_NAMESPACE" \
+                        ALB_DNS="$(kubectl \
                           --kubeconfig "$KUBECONFIG" \
+                          get ingress sample-api \
+                          --namespace "$K8S_NAMESPACE" \
                           -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')"
 
                         if [ -n "$ALB_DNS" ]; then
-                            echo "Testing: http://${ALB_DNS}/health"
+                            echo "Testing http://${ALB_DNS}/health"
 
-                            if curl --fail --silent --show-error \
+                            if curl \
+                              --fail \
+                              --silent \
+                              --show-error \
                               "http://${ALB_DNS}/health"; then
+
                                 echo
                                 echo "Smoke test passed"
                                 exit 0
@@ -180,6 +178,26 @@ pipeline {
                 '''
             }
         }
+
+        stage('Deployment Summary') {
+            steps {
+                sh '''
+                    set -eu
+
+                    kubectl --kubeconfig "$KUBECONFIG" \
+                      get deployment,pods,service,ingress,hpa \
+                      --namespace "$K8S_NAMESPACE"
+
+                    echo
+                    echo "Deployed image:"
+
+                    kubectl --kubeconfig "$KUBECONFIG" \
+                      get deployment sample-api \
+                      --namespace "$K8S_NAMESPACE" \
+                      -o jsonpath='{.spec.template.spec.containers[0].image}{"\\n"}'
+                '''
+            }
+        }
     }
 
     post {
@@ -188,7 +206,11 @@ pipeline {
                 rm -f "$KUBECONFIG"
 
                 ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
                 docker logout "$ECR_REGISTRY" || true
+
+                docker image rm \
+                  "${IMAGE_URI}:${BUILD_NUMBER}" || true
             '''
         }
 
@@ -197,7 +219,7 @@ pipeline {
         }
 
         failure {
-            echo 'Pipeline failed. Review the failed stage.'
+            echo 'Pipeline failed. Check the failed stage in Console Output.'
         }
     }
 }
